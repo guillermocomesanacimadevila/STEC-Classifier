@@ -1,0 +1,4 @@
+task_id	hash	native_id	name	status	exit	submit	duration	realtime	%cpu	peak_rss	peak_vmem	rchar	wchar
+1	2b/1bc796	10930	clean_metadata (Cleaning Metadata)	COMPLETED	0	2025-04-10 21:19:34.583	4.1s	2s	-	-	-	-	-
+2	38/469e57	10970	region_rf_pipeline (Random Forest Region Classification)	COMPLETED	0	2025-04-10 21:19:38.718	9m 51s	9m 50s	-	-	-	-	-
+3	83/31a501	11118	blast_top10 (BLAST Top 10 kmers)	COMPLETED	0	2025-04-10 21:29:30.078	46m 7s	46m 4s	-	-	-	-	-

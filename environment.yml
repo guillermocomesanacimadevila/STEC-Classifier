@@ -3,12 +3,17 @@ channels:
   - conda-forge
   - bioconda
   - defaults
+
 dependencies:
   - python=3.10
   - pandas
   - numpy
-  - scikit-learn
   - matplotlib
   - seaborn
+  - scikit-learn
   - joblib
+  - biopython
   - blast
+  - pip
+  - pip:
+      - tqdm

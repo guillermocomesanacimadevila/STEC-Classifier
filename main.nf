@@ -10,6 +10,7 @@ params.outdir         = "results"
 params.rf_script      = "scripts/02_rf_region_pipeline.py"
 params.cleaning_script = "scripts/01_data_cleaning.py"
 params.blast_script    = "scripts/03_blast_top10.sh"
+params.target_column   = "Region"
 
 // ==================== CHANNELS ==================== //
 
@@ -26,14 +27,17 @@ Channel.value(file(params.blast_script)).set { blast_script_ch }
 
 workflow {
 
+    // Step 1: Clean metadata
     clean_metadata(train_metadata_ch.combine(test_metadata_ch).combine(cleaning_script_ch))
 
+    // Step 2: Train RF model using cleaned metadata + kmer files
     region_rf_pipeline(
         clean_metadata.out.combine(train_kmers_ch)
                           .combine(test_kmers_ch)
                           .combine(rf_script_ch)
     )
 
+    // Step 3: BLAST top 10 kmers
     blast_top10(
         region_rf_pipeline.out.combine(blast_script_ch)
     )
@@ -69,7 +73,7 @@ process region_rf_pipeline {
     conda = './environment.yml'
 
     input:
-    tuple path(train_metadata), path(test_metadata),
+    tuple path(train_metadata_cleaned), path(test_metadata_cleaned),
           path(train_kmers), path(test_kmers),
           path(script_file)
 
@@ -81,12 +85,13 @@ process region_rf_pipeline {
     source \$(conda info --base)/etc/profile.d/conda.sh
     conda activate rf-region-classifier
     python ${script_file} \\
-        --train_metadata ${train_metadata} \\
-        --test_metadata ${test_metadata} \\
+        --train_metadata ${train_metadata_cleaned} \\
+        --test_metadata ${test_metadata_cleaned} \\
         --train_kmers ${train_kmers} \\
         --test_kmers ${test_kmers} \\
         --output_dir output \\
-        --model_dir models
+        --model_dir models \\
+        --target_column ${params.target_column}
     """
 }
 

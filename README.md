@@ -7,3 +7,12 @@
   <img src="https://github.com/user-attachments/assets/805532d9-fc8b-446f-aac6-933cc4aa6185" alt="Git" width="65" style="margin: 0 10px;"/>
   <img src="https://github.com/user-attachments/assets/0427f54d-9e05-4969-91d1-13af16c3fb42" alt="SQL" width="110" style="margin: 0 10px;"/>
 </p>
+
+## Execute Pipeline
+
+```bash
+git clone https://github.com/guillermocomesanacimadevila/STEC-Classifier.git
+cd STEC-Classifier
+bash ~/tools/nextflow run /full/path/to/main.nf
+chmod +x run_pipeline.sh && ./run_pipeline.sh
+```

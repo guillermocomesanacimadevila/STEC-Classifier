@@ -1,4 +1,7 @@
 # STEC Pipeline Description 🧬🧬
+Random Forest Classification pipeline -> Classify Shigatoxigenic E.coli samples based on Geographical Region & Country
+-> Features = kmers
+-> Predictor = Region / Country
 
 ## Tools & Languages
 <p align="left">

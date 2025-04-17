@@ -12,7 +12,16 @@
 
 ```bash
 git clone https://github.com/guillermocomesanacimadevila/STEC-Classifier.git
+```
+
+```bash
 cd STEC-Classifier
+```
+
+```bash
 bash ~/tools/nextflow run /full/path/to/main.nf
+```
+
+```bash
 chmod +x run_pipeline.sh && ./run_pipeline.sh
 ```

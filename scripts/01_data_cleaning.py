@@ -23,8 +23,16 @@ if not os.path.isfile(test_path):
     sys.exit(3)
 
 # === Read files ===
-metadata_tr = pd.read_csv(train_path, sep=",", index_col=0)
-metadata_te = pd.read_csv(test_path, sep=",", index_col=0)
+metadata_tr = pd.read_csv(train_path)
+metadata_te = pd.read_csv(test_path)
+
+# === Ensure 'SampleID' is set as index ===
+if 'SampleID' not in metadata_tr.columns or 'SampleID' not in metadata_te.columns:
+    print("❌ 'SampleID' column not found in one of the input files.")
+    sys.exit(4)
+
+metadata_tr.set_index("SampleID", inplace=True)
+metadata_te.set_index("SampleID", inplace=True)
 
 # === Country Fixes ===
 metadata_tr['Country'] = metadata_tr['Country'].replace({
@@ -91,4 +99,4 @@ os.makedirs(f"{base_dir}/data/Testing", exist_ok=True)
 df.to_csv(f"{base_dir}/data/Training/metadata_14_18_cleaned.csv", sep=",", index=True)
 df2.to_csv(f"{base_dir}/data/Testing/metadata_19_cleaned.csv", sep=",", index=True)
 
-print("\n✅ Metadata cleaning complete. Cleaned files saved.")
+print("\n✅ Metadata cleaning complete. Cleaned files saved with SampleID as index.")

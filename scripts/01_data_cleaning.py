@@ -23,25 +23,52 @@ def load_metadata(train_path, test_path):
     return metadata_tr, metadata_te
 
 
-def clean_metadata(metadata_tr, metadata_te):
-    metadata_tr['Country'] = metadata_tr['Country'].replace({'N': 'UK', 'Portgual': 'Portugal', 'Wales': 'UK'})
-    metadata_te['Country'] = metadata_te['Country'].replace({'N': 'UK'})
+def normalize_text_fields(df):
+    # Strip all string columns
+    for col in df.select_dtypes(include='object').columns:
+        df[col] = df[col].str.strip()
+        df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+    return df
 
-    df = metadata_tr[metadata_tr["Stx"].astype(str).str.strip().str.lower() != "none"]
+
+def clean_country_column(df):
+    # Normalize known issues in country names
+    country_map = {
+        'N': 'UK',
+        'Portgual': 'Portugal',
+        'Wales': 'UK',
+        'Saudia Arabia': 'Saudi Arabia'
+    }
+    df['Country'] = df['Country'].replace(country_map)
+    return df
+
+
+def clean_metadata(metadata_tr, metadata_te):
+    # Normalize whitespace and text fields
+    metadata_tr = normalize_text_fields(metadata_tr)
+    metadata_te = normalize_text_fields(metadata_te)
+
+    # Standardize country names
+    metadata_tr = clean_country_column(metadata_tr)
+    metadata_te = clean_country_column(metadata_te)
+
+    # Remove entries with invalid or missing 'Stx' or 'PT'
+    df = metadata_tr[
+        metadata_tr["Stx"].str.lower() != "none"
+    ].copy()
     df = df[df["Stx"].notna()]
+    df = df[df["PT"].str.lower() != "nan"]
+    df = df[df["PT"].notna()]
     print(f"Stx cleaned: {metadata_tr.shape[0] - df.shape[0]} entries removed")
 
-    df = df[df["PT"].astype(str).str.strip().str.lower() != "nan"]
-    df = df[df["PT"].notna()]
-    print(f"Training data shape after cleaning: {df.shape}")
-
     df2 = metadata_te[
-        (metadata_te["PT"].notna()) &
-        (metadata_te["PT"].astype(str).str.strip().str.lower() != "nan") &
         (metadata_te["Stx"].notna()) &
-        (metadata_te["Stx"].astype(str).str.strip().str.lower() != "none")
-    ]
+        (metadata_te["Stx"].str.lower() != "none") &
+        (metadata_te["PT"].notna()) &
+        (metadata_te["PT"].str.lower() != "nan")
+    ].copy()
 
+    print(f"Training data shape after cleaning: {df.shape}")
     return df, df2
 
 

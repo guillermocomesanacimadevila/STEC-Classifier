@@ -38,9 +38,14 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
     metadata = pd.read_csv(metadata_path, sep=",", index_col=0)
     kmer_table = pd.read_csv(kmer_path, sep="\t", index_col=0)
 
+    print(f"Loaded metadata shape: {metadata.shape}")
+    print(f"Loaded kmer shape: {kmer_table.shape}")
+
     non_zero_counts = (kmer_table > 0).sum(axis=1)
     cutoff = int(0.05 * kmer_table.shape[1])
     kmer_filtered = kmer_table.loc[non_zero_counts > cutoff]
+
+    print(f"Kmers after filtering: {kmer_filtered.shape[0]}")
 
     if kmer_filtered.empty:
         raise ValueError("No kmers left after filtering.")
@@ -53,6 +58,10 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
     X = pd.DataFrame(kmer_scaled, index=kmer_normalized.columns)
 
     shared_samples = metadata.index.intersection(X.index)
+    print(f"🔍 Metadata Index Example: {metadata.index[:5].tolist()}")
+    print(f"🔍 K-mer Columns Example: {X.index[:5].tolist()}")
+    print(f"🔗 Shared samples between metadata and kmer data: {len(shared_samples)}")
+
     if len(shared_samples) == 0:
         raise ValueError("No shared samples between metadata and kmer data!")
 

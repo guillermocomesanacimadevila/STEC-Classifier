@@ -3,17 +3,18 @@
 import os
 import warnings
 import joblib
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import argparse
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from sklearn.utils import resample
+from imblearn.under_sampling import RandomUnderSampler
 
 warnings.filterwarnings("ignore")
 
@@ -33,24 +34,16 @@ os.makedirs(args.model_dir, exist_ok=True)
 
 # === FUNCTIONS ===
 
-def load_and_preprocess_data(metadata_path, kmer_path):
-    metadata = pd.read_csv(metadata_path, sep=",")
-    if 'Accession' not in metadata.columns:
-        raise ValueError("'Accession' column not found in metadata.")
-    metadata.set_index("Accession", inplace=True)
-
+def load_and_preprocess_data(metadata_path, kmer_path, target_column):
+    metadata = pd.read_csv(metadata_path, sep=",", index_col=0)
     kmer_table = pd.read_csv(kmer_path, sep="\t", index_col=0)
-
-    print(f"Loaded metadata shape: {metadata.shape}")
-    print(f"Loaded kmer shape: {kmer_table.shape}")
 
     non_zero_counts = (kmer_table > 0).sum(axis=1)
     cutoff = int(0.05 * kmer_table.shape[1])
     kmer_filtered = kmer_table.loc[non_zero_counts > cutoff]
+
     if kmer_filtered.empty:
         raise ValueError("No kmers left after filtering.")
-
-    print(f"Kmers after filtering: {kmer_filtered.shape[0]}")
 
     kmer_normalized = kmer_filtered.div(kmer_filtered.sum(axis=0), axis=1) * 100
     kmer_normalized = kmer_normalized.astype(float)
@@ -60,17 +53,12 @@ def load_and_preprocess_data(metadata_path, kmer_path):
     X = pd.DataFrame(kmer_scaled, index=kmer_normalized.columns)
 
     shared_samples = metadata.index.intersection(X.index)
-    print(f"\n🔍 Metadata Index Example: {metadata.index[:5].tolist()}")
-    print(f"🔍 K-mer Columns Example: {X.index[:5].tolist()}")
-
     if len(shared_samples) == 0:
         raise ValueError("No shared samples between metadata and kmer data!")
 
-    print(f"🔗 Shared samples between metadata and kmer data: {len(shared_samples)}")
-
     metadata = metadata.loc[shared_samples]
     X = X.loc[shared_samples]
-    y = metadata[args.target_column]
+    y = metadata[target_column]
 
     return X, y, kmer_normalized, scaler
 
@@ -81,31 +69,42 @@ def compute_balance_metrics(y):
     shannon_normalized = shannon / np.log(len(proportions))
     return gini, shannon_normalized, proportions
 
-def perfectly_balance_classes(X, y):
-    print("\n⚖️ Performing PERFECT class balancing (oversampling to match max class count)")
-    df = X.copy()
-    df["label"] = y
-    max_count = df["label"].value_counts().max()
-    balanced_df = pd.concat([
-        resample(group, replace=True, n_samples=max_count, random_state=42)
-        for _, group in df.groupby("label")
-    ])
-    X_balanced = balanced_df.drop(columns=["label"])
-    y_balanced = balanced_df["label"]
+def choose_best_balancing_method(X, y):
+    def apply_and_score(method_name, X_in, y_in):
+        if method_name == "oversample":
+            df = X_in.copy()
+            df["label"] = y_in
+            max_count = df["label"].value_counts().max()
+            balanced_df = pd.concat([
+                resample(group, replace=True, n_samples=max_count, random_state=42)
+                for _, group in df.groupby("label")
+            ])
+            X_res = balanced_df.drop(columns=["label"])
+            y_res = balanced_df["label"]
+        elif method_name == "undersample":
+            rus = RandomUnderSampler(random_state=42)
+            X_res, y_res = rus.fit_resample(X_in, y_in)
+        else:
+            raise ValueError("Unknown method")
 
-    gini_orig, entropy_orig, p_orig = compute_balance_metrics(y)
-    gini_bal, entropy_bal, p_bal = compute_balance_metrics(y_balanced)
+        gini, entropy, _ = compute_balance_metrics(y_res)
+        return gini, entropy, X_res, y_res
 
-    print(f"\n📊 Class Balance (Before):\n{p_orig}\nGini: {gini_orig:.4f} | Entropy: {entropy_orig:.4f}")
-    print(f"\n📊 Class Balance (After):\n{p_bal}\nGini: {gini_bal:.4f} | Entropy: {entropy_bal:.4f}")
+    methods = ["oversample", "undersample"]
+    scores = {}
+    results = {}
 
-    pd.DataFrame({
-        "Class": p_orig.index,
-        "Proportion_Original": p_orig.values,
-        "Proportion_Balanced": p_bal.values
-    }).to_csv(f"{args.output_dir}/class_balance_comparison.csv", index=False)
+    print("\n🔬 Trying different class balancing strategies...\n")
+    for method in methods:
+        gini, entropy, Xb, yb = apply_and_score(method, X, y)
+        scores[method] = (gini, entropy)
+        results[method] = (Xb, yb)
+        print(f"{method.capitalize()} ➜ Gini: {gini:.4f}, Entropy: {entropy:.4f}")
 
-    return X_balanced, y_balanced
+    best_method = max(scores, key=lambda k: (scores[k][0], scores[k][1]))
+    print(f"\n✅ Selected balancing method: {best_method.upper()} (Best balance)")
+
+    return results[best_method]
 
 def build_rf():
     return RandomForestClassifier(class_weight='balanced', n_jobs=-1, random_state=42, oob_score=True)
@@ -123,8 +122,9 @@ def run_grid_search(X_train, y_train):
 
 def find_best_split(X, y, n_iter=30, test_size=0.2):
     best_score = -1
-    best_data = None
+    best_data = {}
 
+    print(f"\n🔍 Searching for best train/validation split using {n_iter} random seeds...\n")
     for seed in range(n_iter):
         X_train, X_valid, y_train, y_valid = train_test_split(
             X, y, test_size=test_size, stratify=y, random_state=seed
@@ -148,7 +148,8 @@ def find_best_split(X, y, n_iter=30, test_size=0.2):
 def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
     report = classification_report(y_true, y_pred, digits=3, output_dict=True)
     pd.DataFrame(report).transpose().to_csv(f"{save_path_prefix}_report.csv")
-    print(f"\n{name} Classification Report:\n", pd.DataFrame(report).transpose())
+    print(f"\n{name} Classification Report:\n")
+    print(pd.DataFrame(report).transpose())
 
     conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
     conf_df = pd.DataFrame(conf_matrix, index=labels, columns=labels)
@@ -157,9 +158,17 @@ def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
     sns.set(font_scale=1.2)
     sns.set_style("whitegrid")
 
-    ax = sns.heatmap(conf_df, annot=True, fmt='d', cmap='Blues',
-                     xticklabels=labels, yticklabels=labels,
-                     linewidths=0.5, linecolor='gray', cbar_kws={"shrink": 0.8})
+    ax = sns.heatmap(
+        conf_df,
+        annot=True,
+        fmt='d',
+        cmap='Blues',
+        xticklabels=labels,
+        yticklabels=labels,
+        linewidths=0.5,
+        linecolor='gray',
+        cbar_kws={"shrink": 0.8}
+    )
 
     ax.set_title(f"{name} Confusion Matrix", fontsize=16, weight='bold', pad=20)
     ax.set_xlabel("Predicted Label", fontsize=14)
@@ -181,7 +190,14 @@ def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
     sns.set_style("whitegrid")
     sns.set_context("talk")
 
-    ax = sns.barplot(x="Importance", y="Feature", data=top_df, edgecolor='black', linewidth=0.8)
+    ax = sns.barplot(
+        x="Importance",
+        y="Feature",
+        data=top_df,
+        edgecolor='black',
+        linewidth=0.8
+    )
+
     ax.set_title("Top 10 Most Informative k-mers", fontsize=16, weight='bold', pad=15)
     ax.set_xlabel("Feature Importance", fontsize=14)
     ax.set_ylabel("k-mer", fontsize=14)
@@ -198,12 +214,9 @@ def save_model(model, scaler, prefix):
     pd.DataFrame(model.cv_results_).to_csv(f"{args.model_dir}/grid_search_results.csv", index=False)
 
 def predict_test(best_model, scaler, kmer_normalized):
-    metadata = pd.read_csv(args.test_metadata, sep=",")
-    if 'Accession' not in metadata.columns:
-        raise ValueError("'Accession' column not found in test metadata.")
-    metadata.set_index('Accession', inplace=True)
-
+    metadata = pd.read_csv(args.test_metadata, sep=",", index_col=0)
     kmer = pd.read_csv(args.test_kmers, sep="\t", index_col=0)
+
     shared_kmers = kmer_normalized.index.intersection(kmer.index)
     if shared_kmers.empty:
         raise ValueError("No shared kmers between training and test data!")
@@ -226,13 +239,12 @@ def predict_test(best_model, scaler, kmer_normalized):
 # === MAIN ===
 
 def main():
-    X, y, kmer_normalized, scaler = load_and_preprocess_data(args.train_metadata, args.train_kmers)
+    X, y, kmer_normalized, scaler = load_and_preprocess_data(args.train_metadata, args.train_kmers, args.target_column)
 
-    split = find_best_split(X, y, n_iter=50)
-    X_train, X_valid = split['X_train'], split['X_valid']
-    y_train, y_valid = split['y_train'], split['y_valid']
+    split_data = find_best_split(X, y, n_iter=30)
+    X_train, X_valid, y_train, y_valid = split_data['X_train'], split_data['X_valid'], split_data['y_train'], split_data['y_valid']
 
-    X_train, y_train = perfectly_balance_classes(X_train, y_train)
+    X_train, y_train = choose_best_balancing_method(X_train, y_train)
 
     grid_model = run_grid_search(X_train, y_train)
     best_model = grid_model.best_estimator_
@@ -243,9 +255,11 @@ def main():
     labels = sorted(set(y_valid) | set(y_pred_val))
     evaluate_model(y_valid, y_pred_val, labels, "Validation", f"{args.output_dir}/validation")
 
-    plot_top_features(best_model, kmer_normalized,
-                      path_csv=f"{args.output_dir}/top10_kmers.csv",
-                      path_png=f"{args.output_dir}/top10_features.png")
+    plot_top_features(
+        best_model, kmer_normalized,
+        path_csv=f"{args.output_dir}/top10_kmers.csv",
+        path_png=f"{args.output_dir}/top10_features.png"
+    )
 
     y_test_true, y_test_pred = predict_test(best_model, scaler, kmer_normalized)
     labels_test = sorted(set(y_test_true) | set(y_test_pred))

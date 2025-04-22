@@ -154,10 +154,8 @@ def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
     conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
     conf_df = pd.DataFrame(conf_matrix, index=labels, columns=labels)
 
-    plt.figure(figsize=(12, 10))
-    sns.set(font_scale=1.2)
-    sns.set_style("whitegrid")
-
+    plt.figure(figsize=(6, 5), dpi=300)
+    sns.set_theme(style="white")
     ax = sns.heatmap(
         conf_df,
         annot=True,
@@ -165,18 +163,23 @@ def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
         cmap='Blues',
         xticklabels=labels,
         yticklabels=labels,
-        linewidths=0.5,
+        linewidths=0.6,
         linecolor='gray',
-        cbar_kws={"shrink": 0.8}
+        cbar=False,
+        square=True,
+        annot_kws={"size": 10, "weight": "bold"}
     )
-
-    ax.set_title(f"{name} Confusion Matrix", fontsize=16, weight='bold', pad=20)
-    ax.set_xlabel("Predicted Label", fontsize=14)
-    ax.set_ylabel("True Label", fontsize=14)
-    plt.xticks(rotation=45, ha='right', fontsize=12)
-    plt.yticks(rotation=0, fontsize=12)
+    ax.set_title(f"{name} Confusion Matrix", fontsize=14, weight='bold', pad=10)
+    ax.set_xlabel("Predicted Label", fontsize=12)
+    ax.set_ylabel("True Label", fontsize=12)
+    ax.tick_params(axis='both', which='major', labelsize=10)
+    plt.xticks(rotation=0)
+    plt.yticks(rotation=0)
+    for _, spine in ax.spines.items():
+        spine.set_visible(True)
+        spine.set_linewidth(0.5)
     plt.tight_layout()
-    plt.savefig(f"{save_path_prefix}_confusion_matrix.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{save_path_prefix}_confusion_matrix.png", bbox_inches='tight', dpi=600)
     plt.close()
 
 def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
@@ -186,26 +189,26 @@ def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
     top_df = importance_df[importance_df["Feature"].str.len() >= 10].sort_values(by="Importance", ascending=False).head(top_n)
     top_df.to_csv(path_csv, index=False)
 
-    plt.figure(figsize=(10, 6))
-    sns.set_style("whitegrid")
-    sns.set_context("talk")
-
+    plt.figure(figsize=(8, 5), dpi=300)
+    sns.set_theme(style="whitegrid")
     ax = sns.barplot(
         x="Importance",
         y="Feature",
         data=top_df,
+        palette="Blues_d",
         edgecolor='black',
         linewidth=0.8
     )
+    ax.set_title("Top 10 Most Informative k-mers", fontsize=14, weight='bold', pad=15)
+    ax.set_xlabel("Feature Importance", fontsize=12)
+    ax.set_ylabel("k-mer", fontsize=12)
+    ax.tick_params(labelsize=10)
 
-    ax.set_title("Top 10 Most Informative k-mers", fontsize=16, weight='bold', pad=15)
-    ax.set_xlabel("Feature Importance", fontsize=14)
-    ax.set_ylabel("k-mer", fontsize=14)
+    for i, v in enumerate(top_df["Importance"]):
+        ax.text(v + 0.002, i, f"{v:.3f}", va='center', fontsize=9)
 
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=10)
     plt.tight_layout()
-    plt.savefig(path_png, dpi=300, bbox_inches='tight')
+    plt.savefig(path_png, dpi=600, bbox_inches='tight')
     plt.close()
 
 def save_model(model, scaler, prefix):

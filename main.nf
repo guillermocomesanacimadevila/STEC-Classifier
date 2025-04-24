@@ -78,7 +78,7 @@ process clean_metadata {
     script:
     """
     source \$(conda info --base)/etc/profile.d/conda.sh
-    conda activate rf-region-classifier
+    conda activate rf-stec-classifier  # This is the correct environment name
     python ${script_file} \\
         --train_metadata ${train_metadata} \\
         --test_metadata ${test_metadata} \\
@@ -106,7 +106,7 @@ process region_rf_pipeline {
     script:
     """
     source \$(conda info --base)/etc/profile.d/conda.sh
-    conda activate rf-region-classifier
+    conda activate rf-stec-classifier
     python ${script_file} \\
         --train_metadata ${train_metadata_cleaned} \\
         --test_metadata ${test_metadata_cleaned} \\
@@ -137,7 +137,7 @@ process country_rf_pipeline {
     script:
     """
     source \$(conda info --base)/etc/profile.d/conda.sh
-    conda activate rf-region-classifier
+    conda activate rf-stec-classifier  # No extra comments
     python ${script_file} \\
         --train_metadata ${train_metadata_cleaned} \\
         --test_metadata ${test_metadata_cleaned} \\
@@ -166,7 +166,7 @@ process blast_top10 {
     script:
     """
     source \$(conda info --base)/etc/profile.d/conda.sh
-    conda activate rf-region-classifier
+    conda activate rf-stec-classifier  // Update to the correct environment name
     bash ${script_file} ${top10_kmers} blast_results
     """
 }
@@ -188,7 +188,7 @@ process blast_top10_country {
     script:
     """
     source \$(conda info --base)/etc/profile.d/conda.sh
-    conda activate rf-region-classifier
+    conda activate rf-stec-classifier  // Update to the correct environment name
     bash ${script_file} ${top10_kmers} blast_results_country
     """
 }

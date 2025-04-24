@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-ENV_NAME="rf-region-classifier"
+ENV_NAME="rf-stec-classifier"
 START_TIME=$(date +%s)
 RUN_ID=$(date +%Y%m%d_%H%M%S)
 
 echo "==============================================="
-echo "         RF Region Classifier Pipeline"
+echo "         RF Region & Country Pipeline"
 echo "==============================================="
 echo "📅 Start time : $(date)"
 echo "🔍 Conda env  : $ENV_NAME"
@@ -50,10 +50,11 @@ echo "==============================================="
 echo "🎉 Pipeline execution completed successfully!"
 echo "==============================================="
 echo "📁 Outputs generated:"
-echo "   - Cleaned metadata      : data/Training/metadata_14_18_cleaned.csv"
-echo "   - Trained model outputs : models/"
-echo "   - RF evaluation results : output/"
-echo "   - BLAST results         : blast_results/ or results/blast/"
+echo "   - Cleaned metadata        : data/Training/metadata_14_18_cleaned.csv"
+echo "   - Region model outputs    : output/"
+echo "   - Country model outputs   : output_country/"
+echo "   - Region BLAST results    : blast_results/"
+echo "   - Country BLAST results   : blast_results_country/"
 echo "==============================================="
 echo "📊 Pipeline reports:"
 echo "   - Execution report : report_${RUN_ID}.html"

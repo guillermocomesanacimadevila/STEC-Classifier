@@ -14,7 +14,7 @@ import random
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils import resample
 from imblearn.under_sampling import RandomUnderSampler
 
@@ -50,7 +50,7 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
     X = pd.DataFrame(kmer_scaled, index=kmer_normalized.columns)
 
     shared_samples = metadata.index.intersection(X.index)
-    print(f"🔗 Shared samples: {len(shared_samples)}")
+    print(f"\U0001F517 Shared samples: {len(shared_samples)}")
 
     if len(shared_samples) == 0:
         raise ValueError("No shared samples between metadata and kmer data!")
@@ -66,7 +66,8 @@ def compute_balance_metrics(y):
     gini = 1 - np.sum(proportions ** 2)
     shannon = -np.sum(proportions * np.log(proportions + 1e-12))
     shannon_normalized = shannon / np.log(len(proportions))
-    return gini, shannon_normalized, proportions
+    imbalance_ratio = proportions.max() / proportions.min() if len(proportions) > 1 else 0
+    return gini, shannon_normalized, imbalance_ratio, proportions
 
 def choose_best_balancing_method(X, y):
     def apply_and_score(method_name, X_in, y_in):
@@ -86,22 +87,22 @@ def choose_best_balancing_method(X, y):
         else:
             raise ValueError("Unknown method")
 
-        gini, entropy, _ = compute_balance_metrics(y_res)
-        return gini, entropy, X_res, y_res
+        gini, entropy, imbalance, _ = compute_balance_metrics(y_res)
+        return gini, entropy, imbalance, X_res, y_res
 
     methods = ["oversample", "undersample"]
     scores = {}
     results = {}
 
-    print("\n🤜 Trying different class balancing strategies...\n")
+    print("\n\U0001F91C Trying different class balancing strategies...\n")
     for method in methods:
-        gini, entropy, Xb, yb = apply_and_score(method, X, y)
-        scores[method] = (gini, entropy)
+        gini, entropy, imbalance, Xb, yb = apply_and_score(method, X, y)
+        scores[method] = (gini, entropy, imbalance)
         results[method] = (Xb, yb)
-        print(f"{method.capitalize()} ➔ Gini: {gini:.4f}, Entropy: {entropy:.4f}")
+        print(f"{method.capitalize()} \u2794 Gini: {gini:.4f}, Entropy: {entropy:.4f}, Imbalance Ratio: {imbalance:.2f}")
 
-    best_method = max(scores, key=lambda k: (scores[k][0], scores[k][1]))
-    print(f"\n✅ Selected balancing method: {best_method.upper()}")
+    best_method = max(scores, key=lambda k: (scores[k][0], scores[k][1], -scores[k][2]))
+    print(f"\n\u2705 Selected balancing method: {best_method.upper()}")
     return results[best_method]
 
 def build_rf():
@@ -158,7 +159,7 @@ def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
     plt.close()
 
 def compute_and_plot_shap(best_model, X_train, output_path, top_n=10):
-    print("\n🌟 Computing SHAP values...")
+    print("\n\U0001F31F Computing SHAP values...")
     explainer = shap.TreeExplainer(best_model)
     shap_values = explainer.shap_values(X_train)
 
@@ -167,11 +168,11 @@ def compute_and_plot_shap(best_model, X_train, output_path, top_n=10):
     plt.tight_layout()
     plt.savefig(output_path, bbox_inches='tight')
     plt.close()
-    print(f"✅ SHAP summary plot saved to {output_path}")
+    print(f"\u2705 SHAP summary plot saved to {output_path}")
 
 def save_model(model, scaler, prefix, model_dir):
-    joblib.dump(model, f"{model_dir}/RF_{prefix}_best_model.joblib")
-    joblib.dump(scaler, f"{model_dir}/{prefix}_scaler.joblib")
+    joblib.dump(model, f"{model_dir}/RF_{prefix}_best_model.pkl")
+    joblib.dump(scaler, f"{model_dir}/{prefix}_scaler.pkl")
     pd.DataFrame(model.cv_results_).to_csv(f"{model_dir}/grid_search_results.csv", index=False)
 
 def predict_test(best_model, scaler, kmer_normalized, test_metadata_path, test_kmers_path, target_column):
@@ -213,7 +214,7 @@ def plot_hyperparam_performance(grid_model, output_path):
     plt.tight_layout()
     plt.savefig(output_path, bbox_inches='tight')
     plt.close()
-    print(f"📈 Hyperparameter performance plot saved to {output_path}")
+    print(f"\U0001F4C8 Hyperparameter performance plot saved to {output_path}")
 
 # === MAIN ===
 
@@ -232,12 +233,12 @@ def main():
     os.makedirs(args.model_dir, exist_ok=True)
 
     X, y, kmer_normalized, scaler = load_and_preprocess_data(args.train_metadata, args.train_kmers, args.target_column)
-    X_train, X_valid, y_train, y_valid = train_test_split(X, y, stratify=y, test_size=0.2, random_state=SEED)
-    X_train, y_train = choose_best_balancing_method(X_train, y_train)
+    X_balanced, y_balanced = choose_best_balancing_method(X, y)
+    X_train, X_valid, y_train, y_valid = train_test_split(X_balanced, y_balanced, stratify=y_balanced, test_size=0.2, random_state=SEED)
     grid_model = run_grid_search(X_train, y_train)
     best_model = grid_model.best_estimator_
 
-    save_model(grid_model, scaler, args.target_column.lower(), args.model_dir)
+    save_model(best_model, scaler, args.target_column.lower(), args.model_dir)
     plot_hyperparam_performance(grid_model, f"{args.output_dir}/hyperparam_performance.png")
 
     y_pred_val = best_model.predict(X_valid)
@@ -256,7 +257,7 @@ def main():
         f"Predicted_{args.target_column}": y_test_pred
     }).to_csv(f"{args.output_dir}/{args.target_column.lower()}_predictions_test.csv")
 
-    print(f"\n✅ {args.target_column} pipeline complete. Outputs saved to: {args.output_dir}")
+    print(f"\n\u2705 {args.target_column} pipeline complete. Outputs saved to: {args.output_dir}")
 
 if __name__ == "__main__":
     main()

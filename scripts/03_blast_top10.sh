@@ -1,11 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# === CONFIG ===
-INPUT="output/top10_kmers.csv"
-BLAST_DIR="blast_results"
+# === USAGE ===
+# ./03_blast_top10.sh path/to/top10_kmers.csv [output_dir]
+
+# === INPUTS ===
+INPUT=$1
+BLAST_DIR=${2:-blast_results}  # use second arg or default
 SUMMARY="${BLAST_DIR}/blast_summary.txt"
-SLEEP_TIME=5  # pause to avoid NCBI rate limiting
+SLEEP_TIME=5
 
 mkdir -p "$BLAST_DIR"
 > "$SUMMARY"
@@ -13,7 +16,7 @@ mkdir -p "$BLAST_DIR"
 start_time=$(date +%s)
 
 echo "🧬 Starting BLAST on top 10 kmers from: $INPUT"
-echo "🔽 Output folder: $BLAST_DIR"
+echo "📁 Output folder: $BLAST_DIR"
 
 # === Check if BLAST+ is installed ===
 if ! command -v blastn &> /dev/null; then
@@ -52,7 +55,7 @@ tail -n +2 "$INPUT" | while IFS=, read -r kmer importance; do
 
     rm -f "$fasta_file"
 
-    sleep $SLEEP_TIME  # avoid hammering NCBI
+    sleep $SLEEP_TIME
 done
 
 # === Wrap Up ===

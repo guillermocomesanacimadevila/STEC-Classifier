@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ENV_NAME="rf-stec-classifier"
+ENV_NAME="rf-stec-classifier" 
 START_TIME=$(date +%s)
 RUN_ID=$(date +%Y%m%d_%H%M%S)
 

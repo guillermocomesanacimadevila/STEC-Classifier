@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 
+import argparse
 import os
 import warnings
 import joblib
-import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import shap
+import random
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
@@ -18,19 +20,10 @@ from imblearn.under_sampling import RandomUnderSampler
 
 warnings.filterwarnings("ignore")
 
-# === ARGPARSE ===
-parser = argparse.ArgumentParser()
-parser.add_argument("--train_metadata", required=True)
-parser.add_argument("--test_metadata", required=True)
-parser.add_argument("--train_kmers", required=True)
-parser.add_argument("--test_kmers", required=True)
-parser.add_argument("--output_dir", default="output")
-parser.add_argument("--model_dir", default="models")
-parser.add_argument("--target_column", default="Region")
-args = parser.parse_args()
-
-os.makedirs(args.output_dir, exist_ok=True)
-os.makedirs(args.model_dir, exist_ok=True)
+# === GLOBAL SETTINGS ===
+SEED = 42
+np.random.seed(SEED)
+random.seed(SEED)
 
 # === FUNCTIONS ===
 
@@ -46,7 +39,6 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
     kmer_filtered = kmer_table.loc[non_zero_counts > cutoff]
 
     print(f"Kmers after filtering: {kmer_filtered.shape[0]}")
-
     if kmer_filtered.empty:
         raise ValueError("No kmers left after filtering.")
 
@@ -58,9 +50,7 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
     X = pd.DataFrame(kmer_scaled, index=kmer_normalized.columns)
 
     shared_samples = metadata.index.intersection(X.index)
-    print(f"🔍 Metadata Index Example: {metadata.index[:5].tolist()}")
-    print(f"🔍 K-mer Columns Example: {X.index[:5].tolist()}")
-    print(f"🔗 Shared samples between metadata and kmer data: {len(shared_samples)}")
+    print(f"🔗 Shared samples: {len(shared_samples)}")
 
     if len(shared_samples) == 0:
         raise ValueError("No shared samples between metadata and kmer data!")
@@ -85,13 +75,13 @@ def choose_best_balancing_method(X, y):
             df["label"] = y_in
             max_count = df["label"].value_counts().max()
             balanced_df = pd.concat([
-                resample(group, replace=True, n_samples=max_count, random_state=42)
+                resample(group, replace=True, n_samples=max_count, random_state=SEED)
                 for _, group in df.groupby("label")
             ])
             X_res = balanced_df.drop(columns=["label"])
             y_res = balanced_df["label"]
         elif method_name == "undersample":
-            rus = RandomUnderSampler(random_state=42)
+            rus = RandomUnderSampler(random_state=SEED)
             X_res, y_res = rus.fit_resample(X_in, y_in)
         else:
             raise ValueError("Unknown method")
@@ -103,20 +93,19 @@ def choose_best_balancing_method(X, y):
     scores = {}
     results = {}
 
-    print("\n🔬 Trying different class balancing strategies...\n")
+    print("\n🤜 Trying different class balancing strategies...\n")
     for method in methods:
         gini, entropy, Xb, yb = apply_and_score(method, X, y)
         scores[method] = (gini, entropy)
         results[method] = (Xb, yb)
-        print(f"{method.capitalize()} ➜ Gini: {gini:.4f}, Entropy: {entropy:.4f}")
+        print(f"{method.capitalize()} ➔ Gini: {gini:.4f}, Entropy: {entropy:.4f}")
 
     best_method = max(scores, key=lambda k: (scores[k][0], scores[k][1]))
-    print(f"\n✅ Selected balancing method: {best_method.upper()} (Best balance)")
-
+    print(f"\n✅ Selected balancing method: {best_method.upper()}")
     return results[best_method]
 
 def build_rf():
-    return RandomForestClassifier(class_weight='balanced', n_jobs=-1, random_state=42, oob_score=True)
+    return RandomForestClassifier(class_weight='balanced', n_jobs=-1, random_state=SEED, oob_score=True)
 
 def run_grid_search(X_train, y_train):
     param_grid = {
@@ -124,40 +113,15 @@ def run_grid_search(X_train, y_train):
         'max_depth': [10, None],
         'max_features': ['sqrt', 'log2']
     }
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=SEED)
     model = GridSearchCV(build_rf(), param_grid, cv=cv, scoring='f1_weighted', verbose=1, n_jobs=-1)
     model.fit(X_train, y_train)
     return model
 
-def find_best_split(X, y, n_iter=30, test_size=0.2):
-    best_score = -1
-    best_data = {}
-
-    print(f"\n🔍 Searching for best train/validation split using {n_iter} random seeds...\n")
-    for seed in range(n_iter):
-        X_train, X_valid, y_train, y_valid = train_test_split(
-            X, y, test_size=test_size, stratify=y, random_state=seed
-        )
-        clf = build_rf()
-        clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_valid)
-        score = f1_score(y_valid, y_pred, average='weighted')
-
-        if score > best_score:
-            best_score = score
-            best_data = {
-                'X_train': X_train, 'X_valid': X_valid,
-                'y_train': y_train, 'y_valid': y_valid,
-                'seed': seed, 'score': score
-            }
-
-    print(f"\n🌟 Best split found: Seed={best_data['seed']} | F1={best_data['score']:.4f}")
-    return best_data
-
 def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
+    print(f"\n{name} Classification Report:")
     report = classification_report(y_true, y_pred, digits=3, output_dict=True)
     pd.DataFrame(report).transpose().to_csv(f"{save_path_prefix}_report.csv")
-    print(f"\n{name} Classification Report:\n")
     print(pd.DataFrame(report).transpose())
 
     conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
@@ -165,30 +129,15 @@ def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
 
     plt.figure(figsize=(6, 5), dpi=300)
     sns.set_theme(style="white")
-    ax = sns.heatmap(
-        conf_df,
-        annot=True,
-        fmt='d',
-        cmap='Blues',
-        xticklabels=labels,
-        yticklabels=labels,
-        linewidths=0.6,
-        linecolor='gray',
-        cbar=False,
-        square=True,
-        annot_kws={"size": 10, "weight": "bold"}
-    )
-    ax.set_title(f"{name} Confusion Matrix", fontsize=14, weight='bold', pad=10)
-    ax.set_xlabel("Predicted Label", fontsize=12)
-    ax.set_ylabel("True Label", fontsize=12)
-    ax.tick_params(axis='both', which='major', labelsize=10)
+    ax = sns.heatmap(conf_df, annot=True, fmt='d', cmap='Blues', linewidths=0.6, linecolor='gray',
+                     xticklabels=labels, yticklabels=labels, square=True, annot_kws={"size": 10, "weight": "bold"})
+    ax.set_title(f"{name} Confusion Matrix", fontsize=14, weight='bold')
+    ax.set_xlabel("Predicted Label")
+    ax.set_ylabel("True Label")
     plt.xticks(rotation=0)
     plt.yticks(rotation=0)
-    for _, spine in ax.spines.items():
-        spine.set_visible(True)
-        spine.set_linewidth(0.5)
     plt.tight_layout()
-    plt.savefig(f"{save_path_prefix}_confusion_matrix.png", bbox_inches='tight', dpi=600)
+    plt.savefig(f"{save_path_prefix}_confusion_matrix.png", dpi=600, bbox_inches='tight')
     plt.close()
 
 def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
@@ -200,80 +149,105 @@ def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
 
     plt.figure(figsize=(8, 5), dpi=300)
     sns.set_theme(style="whitegrid")
-    ax = sns.barplot(
-        x="Importance",
-        y="Feature",
-        data=top_df,
-        palette="Blues_d",
-        edgecolor='black',
-        linewidth=0.8
-    )
-    ax.set_title("Top 10 Most Informative k-mers", fontsize=14, weight='bold', pad=15)
-    ax.set_xlabel("Feature Importance", fontsize=12)
-    ax.set_ylabel("k-mer", fontsize=12)
-    ax.tick_params(labelsize=10)
-
-    for i, v in enumerate(top_df["Importance"]):
-        ax.text(v + 0.002, i, f"{v:.3f}", va='center', fontsize=9)
-
+    ax = sns.barplot(x="Importance", y="Feature", data=top_df, palette="Blues_d", edgecolor='black')
+    ax.set_title("Top 10 Most Informative k-mers", fontsize=14, weight='bold')
+    ax.set_xlabel("Feature Importance")
+    ax.set_ylabel("k-mer")
     plt.tight_layout()
     plt.savefig(path_png, dpi=600, bbox_inches='tight')
     plt.close()
 
-def save_model(model, scaler, prefix):
-    joblib.dump(model, f"{args.model_dir}/RF_{prefix}_best_model.joblib")
-    joblib.dump(scaler, f"{args.model_dir}/{prefix}_scaler.joblib")
-    pd.DataFrame(model.cv_results_).to_csv(f"{args.model_dir}/grid_search_results.csv", index=False)
+def compute_and_plot_shap(best_model, X_train, output_path, top_n=10):
+    print("\n🌟 Computing SHAP values...")
+    explainer = shap.TreeExplainer(best_model)
+    shap_values = explainer.shap_values(X_train)
 
-def predict_test(best_model, scaler, kmer_normalized):
-    metadata = pd.read_csv(args.test_metadata, sep=",", index_col=0)
-    kmer = pd.read_csv(args.test_kmers, sep="\t", index_col=0)
+    plt.figure(figsize=(8, 6), dpi=600)
+    shap.summary_plot(shap_values, X_train, plot_type="bar", max_display=top_n, show=False)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches='tight')
+    plt.close()
+    print(f"✅ SHAP summary plot saved to {output_path}")
+
+def save_model(model, scaler, prefix, model_dir):
+    joblib.dump(model, f"{model_dir}/RF_{prefix}_best_model.joblib")
+    joblib.dump(scaler, f"{model_dir}/{prefix}_scaler.joblib")
+    pd.DataFrame(model.cv_results_).to_csv(f"{model_dir}/grid_search_results.csv", index=False)
+
+def predict_test(best_model, scaler, kmer_normalized, test_metadata_path, test_kmers_path, target_column):
+    metadata = pd.read_csv(test_metadata_path, sep=",", index_col=0)
+    kmer = pd.read_csv(test_kmers_path, sep="\t", index_col=0)
 
     shared_kmers = kmer_normalized.index.intersection(kmer.index)
-    if shared_kmers.empty:
-        raise ValueError("No shared kmers between training and test data!")
-
     kmer = kmer.loc[shared_kmers]
     kmer_norm = kmer.div(kmer.sum(axis=0), axis=1) * 100
     kmer_norm = kmer_norm.astype(float).dropna()
     X_test = pd.DataFrame(scaler.transform(kmer_norm.T), index=kmer.columns)
 
     shared_samples = metadata.index.intersection(X_test.index)
-    if len(shared_samples) == 0:
-        raise ValueError("No shared samples between test metadata and kmer data!")
-
     metadata = metadata.loc[shared_samples]
     X_test = X_test.loc[shared_samples]
-    y_true = metadata[args.target_column]
+    y_true = metadata[target_column]
     y_pred = best_model.predict(X_test)
     return y_true, y_pred
+
+def plot_hyperparam_performance(grid_model, output_path):
+    results = pd.DataFrame(grid_model.cv_results_)
+    fig, axs = plt.subplots(1, 3, figsize=(15, 4.5), dpi=600)
+    params = ['param_n_estimators', 'param_max_depth', 'param_max_features']
+    titles = ['# Estimators', 'Max Depth', 'Max Features']
+    best_score = grid_model.best_score_
+
+    for ax, param, title in zip(axs, params, titles):
+        x_vals = results[param].astype(str)
+        y_vals = results['mean_test_score']
+        y_err = results['std_test_score']
+        sns.pointplot(x=x_vals, y=y_vals, join=True, ci=None, ax=ax, color='black')
+        ax.errorbar(x=np.arange(len(x_vals)), y=y_vals, yerr=y_err, fmt='none', ecolor='gray', capsize=3)
+        ax.axhline(best_score, linestyle='--', color='red', label=f'Best F1: {best_score:.4f}')
+        ax.legend(loc='lower right', fontsize=9)
+        ax.set_title(title)
+        ax.set_xlabel(param.replace("param_", "").replace("_", " ").title())
+        ax.set_ylabel("Mean F1 Score")
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches='tight')
+    plt.close()
+    print(f"📈 Hyperparameter performance plot saved to {output_path}")
 
 # === MAIN ===
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train_metadata", required=True)
+    parser.add_argument("--test_metadata", required=True)
+    parser.add_argument("--train_kmers", required=True)
+    parser.add_argument("--test_kmers", required=True)
+    parser.add_argument("--output_dir", default="output")
+    parser.add_argument("--model_dir", default="models")
+    parser.add_argument("--target_column", required=True)
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.model_dir, exist_ok=True)
+
     X, y, kmer_normalized, scaler = load_and_preprocess_data(args.train_metadata, args.train_kmers, args.target_column)
-
-    split_data = find_best_split(X, y, n_iter=30)
-    X_train, X_valid, y_train, y_valid = split_data['X_train'], split_data['X_valid'], split_data['y_train'], split_data['y_valid']
-
+    X_train, X_valid, y_train, y_valid = train_test_split(X, y, stratify=y, test_size=0.2, random_state=SEED)
     X_train, y_train = choose_best_balancing_method(X_train, y_train)
-
     grid_model = run_grid_search(X_train, y_train)
     best_model = grid_model.best_estimator_
 
-    save_model(grid_model, scaler, args.target_column.lower())
+    save_model(grid_model, scaler, args.target_column.lower(), args.model_dir)
+    plot_hyperparam_performance(grid_model, f"{args.output_dir}/hyperparam_performance.png")
 
     y_pred_val = best_model.predict(X_valid)
     labels = sorted(set(y_valid) | set(y_pred_val))
     evaluate_model(y_valid, y_pred_val, labels, "Validation", f"{args.output_dir}/validation")
 
-    plot_top_features(
-        best_model, kmer_normalized,
-        path_csv=f"{args.output_dir}/top10_kmers.csv",
-        path_png=f"{args.output_dir}/top10_features.png"
-    )
+    plot_top_features(best_model, kmer_normalized, f"{args.output_dir}/top10_kmers.csv", f"{args.output_dir}/top10_features.png")
+    compute_and_plot_shap(best_model, X_train, f"{args.output_dir}/shap_summary.png")
 
-    y_test_true, y_test_pred = predict_test(best_model, scaler, kmer_normalized)
+    y_test_true, y_test_pred = predict_test(best_model, scaler, kmer_normalized, args.test_metadata, args.test_kmers, args.target_column)
     labels_test = sorted(set(y_test_true) | set(y_test_pred))
     evaluate_model(y_test_true, y_test_pred, labels_test, "Test", f"{args.output_dir}/test")
 
@@ -282,7 +256,7 @@ def main():
         f"Predicted_{args.target_column}": y_test_pred
     }).to_csv(f"{args.output_dir}/{args.target_column.lower()}_predictions_test.csv")
 
-    print("\n✅ Done. Outputs saved.")
+    print(f"\n✅ {args.target_column} pipeline complete. Outputs saved to: {args.output_dir}")
 
 if __name__ == "__main__":
     main()

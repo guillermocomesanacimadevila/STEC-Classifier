@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# data_cleaning.py
+# data_cleaning_upgraded.py
 
 import os
 import argparse
@@ -24,27 +24,58 @@ def load_metadata(train_path, test_path):
 
 
 def normalize_text_fields(df):
-    # Strip all string columns
     for col in df.select_dtypes(include='object').columns:
+        df[col] = df[col].fillna("").astype(str)
         df[col] = df[col].str.strip()
         df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
     return df
 
 
 def clean_country_column(df):
-    # Normalize known issues in country names
     country_map = {
         'N': 'UK',
-        'Portgual': 'Portugal',
         'Wales': 'UK',
-        'Saudia Arabia': 'Saudi Arabia'
+        'Scotland': 'UK',
+        'England': 'UK',
+        'Portgual': 'Portugal',
+        'Saudia Arabia': 'Saudi Arabia',
+        'Holland': 'Netherlands',
+        'USA': 'United States',
+        'U.S.A.': 'United States',
+        'United States of America': 'United States',
+        'Republic of Ireland': 'Ireland',
+        'Northen Ireland': 'UK',
+        'Northern Ireland': 'UK',
+        'Philipines': 'Philippines'
     }
     df['Country'] = df['Country'].replace(country_map)
     return df
 
 
+def clean_stx_column(df):
+    df['Stx'] = df['Stx'].str.strip()
+    df = df[df['Stx'].notna()]
+    df = df[~df['Stx'].str.lower().eq('none')]
+    return df
+
+
+def clean_pt_column(df):
+    df['PT'] = df['PT'].str.strip()
+    df = df[df['PT'].notna()]
+    df = df[~df['PT'].str.lower().eq('nan')]
+    return df
+
+
+def remove_duplicates(df):
+    before = df.shape[0]
+    df = df[~df.index.duplicated(keep='first')]
+    after = df.shape[0]
+    print(f"🧹 Removed {before - after} duplicate accession entries.")
+    return df
+
+
 def clean_metadata(metadata_tr, metadata_te):
-    # Normalize whitespace and text fields
+    # Normalize whitespace
     metadata_tr = normalize_text_fields(metadata_tr)
     metadata_te = normalize_text_fields(metadata_te)
 
@@ -52,24 +83,21 @@ def clean_metadata(metadata_tr, metadata_te):
     metadata_tr = clean_country_column(metadata_tr)
     metadata_te = clean_country_column(metadata_te)
 
-    # Remove entries with invalid or missing 'Stx' or 'PT'
-    df = metadata_tr[
-        metadata_tr["Stx"].str.lower() != "none"
-    ].copy()
-    df = df[df["Stx"].notna()]
-    df = df[df["PT"].str.lower() != "nan"]
-    df = df[df["PT"].notna()]
-    print(f"Stx cleaned: {metadata_tr.shape[0] - df.shape[0]} entries removed")
+    # Clean Stx and PT
+    metadata_tr = clean_stx_column(metadata_tr)
+    metadata_te = clean_stx_column(metadata_te)
 
-    df2 = metadata_te[
-        (metadata_te["Stx"].notna()) &
-        (metadata_te["Stx"].str.lower() != "none") &
-        (metadata_te["PT"].notna()) &
-        (metadata_te["PT"].str.lower() != "nan")
-    ].copy()
+    metadata_tr = clean_pt_column(metadata_tr)
+    metadata_te = clean_pt_column(metadata_te)
 
-    print(f"Training data shape after cleaning: {df.shape}")
-    return df, df2
+    # Remove duplicates
+    metadata_tr = remove_duplicates(metadata_tr)
+    metadata_te = remove_duplicates(metadata_te)
+
+    print(f"\n✅ Cleaned training shape: {metadata_tr.shape}")
+    print(f"✅ Cleaned testing shape: {metadata_te.shape}")
+
+    return metadata_tr, metadata_te
 
 
 def filter_by_kmers(df, df2, kmer_train_path, kmer_test_path):
@@ -79,10 +107,9 @@ def filter_by_kmers(df, df2, kmer_train_path, kmer_test_path):
     df_filtered = df[df.index.isin(kmer_train_ids)]
     df2_filtered = df2[df2.index.isin(kmer_test_ids)]
 
-    print(f"✅ Training metadata filtered to {len(df_filtered)} samples that match 14-18 k-mer file.")
-    print(f"✅ Test metadata filtered to {len(df2_filtered)} samples that match 19 k-mer file.")
+    print(f"✅ Training metadata filtered to {len(df_filtered)} samples matching k-mer file.")
+    print(f"✅ Test metadata filtered to {len(df2_filtered)} samples matching k-mer file.")
 
-    # Diagnostics
     print("\n🔍 Diagnostic: Metadata vs K-mer sample ID overlap")
     shared = set(df.index) & set(kmer_train_ids)
     only_in_meta = set(df.index) - set(kmer_train_ids)
@@ -94,7 +121,7 @@ def filter_by_kmers(df, df2, kmer_train_path, kmer_test_path):
     return df_filtered, df2_filtered
 
 
-def print_summary(df, df2, metadata_tr, metadata_te):
+def print_summary(df, df2, original_train, original_test):
     print("\n=== Summary ===")
     print("Training set missing values:")
     print(df.isna().sum())
@@ -114,8 +141,9 @@ def print_summary(df, df2, metadata_tr, metadata_te):
     print(f"PT types: {df2['PT'].nunique()}")
 
     print("\nShape comparison:")
-    print(f"Original training shape: {metadata_tr.shape} → Cleaned: {df.shape}")
-    print(f"Original test shape: {metadata_te.shape} → Cleaned: {df2.shape}")
+    print(f"Original training shape: {original_train.shape} → Cleaned: {df.shape}")
+    print(f"Original test shape: {original_test.shape} → Cleaned: {df2.shape}")
+
     print("\n✅ Example sample IDs in cleaned training metadata:")
     print(df.index[:5])
 
@@ -139,10 +167,10 @@ def main():
     args = parser.parse_args()
 
     metadata_tr, metadata_te = load_metadata(args.train_metadata, args.test_metadata)
-    df, df2 = clean_metadata(metadata_tr, metadata_te)
-    df, df2 = filter_by_kmers(df, df2, args.train_kmers, args.test_kmers)
-    print_summary(df, df2, metadata_tr, metadata_te)
-    save_cleaned_metadata(df, df2, args.output_dir)
+    cleaned_tr, cleaned_te = clean_metadata(metadata_tr, metadata_te)
+    filtered_tr, filtered_te = filter_by_kmers(cleaned_tr, cleaned_te, args.train_kmers, args.test_kmers)
+    print_summary(filtered_tr, filtered_te, metadata_tr, metadata_te)
+    save_cleaned_metadata(filtered_tr, filtered_te, args.output_dir)
 
 
 if __name__ == "__main__":

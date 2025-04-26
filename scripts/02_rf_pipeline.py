@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# 02_rf_pipeline_with_feature_selection.py
 
 import argparse
 import os
@@ -15,6 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold, RandomizedSearchCV, train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+from sklearn.feature_selection import VarianceThreshold, mutual_info_classif
 from sklearn.utils import resample
 from imblearn.under_sampling import RandomUnderSampler
 
@@ -24,6 +26,8 @@ warnings.filterwarnings("ignore")
 SEED = 42
 np.random.seed(SEED)
 random.seed(SEED)
+
+TOP_K_FEATURES = 2000  # Number of top informative features to keep
 
 # === FUNCTIONS ===
 
@@ -60,6 +64,27 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
     y = metadata[target_column]
 
     return X, y, kmer_normalized, scaler
+
+def apply_feature_selection(X, y, top_k=TOP_K_FEATURES):
+    print("\n🚿 Applying VarianceThreshold filtering...")
+    selector = VarianceThreshold(threshold=0.0001)
+    X_reduced = selector.fit_transform(X)
+    kept_features = X.columns[selector.get_support()]
+    X_reduced = pd.DataFrame(X_reduced, columns=kept_features, index=X.index)
+
+    print(f"✅ Features after VarianceThreshold: {X_reduced.shape[1]}")
+
+    print("\n📈 Calculating Mutual Information scores...")
+    mi_scores = mutual_info_classif(X_reduced, y, discrete_features=False, random_state=SEED)
+    mi_df = pd.DataFrame({'Feature': X_reduced.columns, 'MI_Score': mi_scores})
+    mi_df = mi_df.sort_values(by='MI_Score', ascending=False)
+
+    top_features = mi_df['Feature'].head(top_k).tolist()
+    X_selected = X_reduced[top_features]
+
+    print(f"✅ Selected top {len(top_features)} features based on Mutual Information.")
+
+    return X_selected
 
 def compute_balance_metrics(y, title="Class Distribution"):
     proportions = y.value_counts(normalize=True)
@@ -253,6 +278,7 @@ def main():
         os.makedirs(model_dir, exist_ok=True)
 
         X, y, kmer_normalized, scaler = load_and_preprocess_data(args.train_metadata, args.train_kmers, target_column)
+        X = apply_feature_selection(X, y, top_k=TOP_K_FEATURES)
         compute_balance_metrics(y, title=f"{target_column} Before Balancing")
         X_balanced, y_balanced = choose_best_balancing_method(X, y)
 

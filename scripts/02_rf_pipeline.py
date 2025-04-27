@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# 02_rf_pipeline_with_feature_selection.py
+# rf_pipeline_with_feature_selection.py
 
+# === IMPORTS ===
 import argparse
 import os
 import warnings
@@ -9,14 +10,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import shap
 import random
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import StratifiedKFold, RandomizedSearchCV, train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
-from sklearn.feature_selection import VarianceThreshold, mutual_info_classif
+from sklearn.model_selection import train_test_split, StratifiedKFold, RandomizedSearchCV
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils import resample
 from imblearn.under_sampling import RandomUnderSampler
 
@@ -26,8 +26,7 @@ warnings.filterwarnings("ignore")
 SEED = 42
 np.random.seed(SEED)
 random.seed(SEED)
-
-TOP_K_FEATURES = 2000  # Number of top informative features to keep
+TOP_K_FEATURES = 2000
 
 # === FUNCTIONS ===
 
@@ -65,45 +64,72 @@ def load_and_preprocess_data(metadata_path, kmer_path, target_column):
 
     return X, y, kmer_normalized, scaler
 
-def apply_feature_selection(X, y, top_k=TOP_K_FEATURES):
-    print("\n🚿 Applying VarianceThreshold filtering...")
+def feature_selection_rf(X, y, top_k=TOP_K_FEATURES, cumulative_threshold=0.95):
+    print("\n🚿 Step 1: Applying VarianceThreshold filtering...")
     selector = VarianceThreshold(threshold=0.0001)
     X_reduced = selector.fit_transform(X)
     kept_features = X.columns[selector.get_support()]
     X_reduced = pd.DataFrame(X_reduced, columns=kept_features, index=X.index)
-
     print(f"✅ Features after VarianceThreshold: {X_reduced.shape[1]}")
 
-    print("\n📈 Calculating Mutual Information scores...")
-    mi_scores = mutual_info_classif(X_reduced, y, discrete_features=False, random_state=SEED)
-    mi_df = pd.DataFrame({'Feature': X_reduced.columns, 'MI_Score': mi_scores})
-    mi_df = mi_df.sort_values(by='MI_Score', ascending=False)
+    print("\n⚡ Step 2: Removing highly correlated features...")
+    corr_matrix = X_reduced.corr().abs()
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+    X_filtered = X_reduced.drop(columns=to_drop)
+    print(f"✅ Features after correlation filtering: {X_filtered.shape[1]}")
 
-    top_features = mi_df['Feature'].head(top_k).tolist()
-    X_selected = X_reduced[top_features]
+    print("\n🌟 Step 3: Training quick RF model for feature importance ranking...")
+    rf_temp = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=20,
+        random_state=SEED,
+        n_jobs=-1,
+        class_weight='balanced_subsample'
+    )
+    rf_temp.fit(X_filtered, y)
 
-    print(f"✅ Selected top {len(top_features)} features based on Mutual Information.")
+    importances = rf_temp.feature_importances_
+    feature_ranking = pd.DataFrame({
+        'Feature': X_filtered.columns,
+        'Importance': importances
+    }).sort_values(by='Importance', ascending=False).reset_index(drop=True)
+
+    feature_ranking['Cumulative'] = feature_ranking['Importance'].cumsum()
+    feature_ranking.to_csv("full_feature_ranking.csv", index=False)
+    print(f"✅ Full feature ranking saved to full_feature_ranking.csv.")
+
+    selected_features = feature_ranking[feature_ranking['Cumulative'] <= cumulative_threshold]['Feature'].tolist()
+
+    if len(selected_features) > top_k:
+        selected_features = feature_ranking['Feature'].head(top_k).tolist()
+    elif len(selected_features) == 0:
+        selected_features = feature_ranking['Feature'].head(top_k).tolist()
+
+    X_selected = X_filtered[selected_features]
+
+    print(f"✅ Selected {len(selected_features)} features (covering {cumulative_threshold*100:.1f}% importance, capped at {top_k}).")
 
     return X_selected
 
-def compute_balance_metrics(y, title="Class Distribution"):
+def compute_balance_metrics(y, title=""):
     proportions = y.value_counts(normalize=True)
     gini = 1 - np.sum(proportions ** 2)
     shannon = -np.sum(proportions * np.log(proportions + 1e-12))
     shannon_normalized = shannon / np.log(len(proportions))
     imbalance_ratio = proportions.max() / proportions.min() if len(proportions) > 1 else 0
 
-    print(f"\n📊 {title}:")
-    print(f"Gini coefficient: {gini:.4f}")
-    print(f"Normalized Shannon entropy: {shannon_normalized:.4f}")
-    print(f"Imbalance ratio (max/min): {imbalance_ratio:.2f}")
-    print(proportions, "\n")
+    print(f"\n📊 {title} Class Distribution Metrics:")
+    print(f"Gini Coefficient: {gini:.4f}")
+    print(f"Shannon Entropy (normalized): {shannon_normalized:.4f}")
+    print(f"Imbalance Ratio (max/min): {imbalance_ratio:.2f}")
+    print(f"Class Proportions:\n{proportions}\n")
 
-    return gini, shannon_normalized, imbalance_ratio
+    return gini, shannon_normalized, imbalance_ratio, proportions
 
 def choose_best_balancing_method(X, y):
-    def apply_and_score(method, X_in, y_in):
-        if method == "oversample":
+    def apply_and_score(method_name, X_in, y_in):
+        if method_name == "oversample":
             df = X_in.copy()
             df["label"] = y_in
             max_count = df["label"].value_counts().max()
@@ -113,27 +139,27 @@ def choose_best_balancing_method(X, y):
             ])
             X_res = balanced_df.drop(columns=["label"])
             y_res = balanced_df["label"]
-        elif method == "undersample":
+        elif method_name == "undersample":
             rus = RandomUnderSampler(random_state=SEED)
             X_res, y_res = rus.fit_resample(X_in, y_in)
         else:
             raise ValueError("Unknown method")
 
-        gini, entropy, imbalance = compute_balance_metrics(y_res, title=f"After {method}")
+        gini, entropy, imbalance, _ = compute_balance_metrics(y_res, title=f"After {method_name.capitalize()}")
         return gini, entropy, imbalance, X_res, y_res
 
     methods = ["oversample", "undersample"]
     scores = {}
     results = {}
 
-    print("\n🤜 Trying different balancing methods...")
+    print("\n🤜 Trying different class balancing strategies...\n")
     for method in methods:
         gini, entropy, imbalance, Xb, yb = apply_and_score(method, X, y)
         scores[method] = (gini, entropy, imbalance)
         results[method] = (Xb, yb)
 
     best_method = max(scores, key=lambda k: (scores[k][0], scores[k][1], -scores[k][2]))
-    print(f"\n✅ Best balancing method: {best_method.upper()}")
+    print(f"\n✅ Selected balancing method: {best_method.upper()}")
     return results[best_method]
 
 def build_rf():
@@ -141,16 +167,16 @@ def build_rf():
 
 def run_grid_search(X_train, y_train):
     param_grid = {
-        'n_estimators': [100, 200],
-        'max_depth': [10, None],
-        'max_features': ['sqrt', 'log2']
+        'n_estimators': [100, 200, 300, 400],
+        'max_depth': [10, 20, None],
+        'max_features': ['sqrt', 'log2', 0.3, 0.5]
     }
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=SEED)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
 
     model = RandomizedSearchCV(
         build_rf(),
         param_distributions=param_grid,
-        n_iter=4,
+        n_iter=10,
         cv=cv,
         scoring='f1_weighted',
         verbose=1,
@@ -158,6 +184,11 @@ def run_grid_search(X_train, y_train):
         random_state=SEED
     )
     model.fit(X_train, y_train)
+
+    # 🚨 Optional: auto-save grid_model immediately after fit, in case crash happens
+    joblib.dump(model, "temporary_grid_model.pkl")
+    print("✅ Temporary grid search object saved after fitting.")
+
     return model
 
 def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
@@ -182,66 +213,22 @@ def evaluate_model(y_true, y_pred, labels, name, save_path_prefix):
     plt.savefig(f"{save_path_prefix}_confusion_matrix.png", dpi=600, bbox_inches='tight')
     plt.close()
 
-def select_best_train_test_split(X, y, n_trials=10):
-    best_f1 = -1
-    best_split = None
+def save_model(grid_model, scaler, prefix, model_dir):
+    best_model = grid_model.best_estimator_
 
-    print("\n🔎 Trying multiple train/test splits...")
-
-    for i in range(1, n_trials + 1):
-        X_train, X_valid, y_train, y_valid = train_test_split(X, y, stratify=y, test_size=0.2, random_state=SEED + i)
-        model = build_rf()
-        model.fit(X_train, y_train)
-        preds = model.predict(X_valid)
-
-        acc = accuracy_score(y_valid, preds)
-        prec = precision_score(y_valid, preds, average="weighted", zero_division=0)
-        rec = recall_score(y_valid, preds, average="weighted", zero_division=0)
-        f1 = f1_score(y_valid, preds, average="weighted", zero_division=0)
-
-        print(f"Trial {i}: Accuracy={acc:.4f} | Precision={prec:.4f} | Recall={rec:.4f} | F1={f1:.4f}")
-
-        if f1 > best_f1:
-            best_f1 = f1
-            best_split = (X_train, X_valid, y_train, y_valid)
-
-    print(f"\n✅ Selected best split with F1={best_f1:.4f}")
-    return best_split
-
-def plot_top_features(model, kmer_normalized, path_csv, path_png, top_n=10):
-    importances = model.feature_importances_
-    feature_names = kmer_normalized.index.tolist()
-    importance_df = pd.DataFrame({"Feature": feature_names, "Importance": importances})
-    top_df = importance_df[importance_df["Feature"].str.len() >= 10].sort_values(by="Importance", ascending=False).head(top_n)
-    top_df.to_csv(path_csv, index=False)
-
-    plt.figure(figsize=(8, 5), dpi=300)
-    sns.set_theme(style="whitegrid")
-    ax = sns.barplot(x="Importance", y="Feature", data=top_df, palette="Blues_d", edgecolor='black')
-    ax.set_title("Top 10 Informative k-mers", fontsize=14, weight='bold')
-    ax.set_xlabel("Feature Importance")
-    ax.set_ylabel("k-mer")
-    plt.tight_layout()
-    plt.savefig(path_png, dpi=600, bbox_inches='tight')
-    plt.close()
-
-def compute_and_plot_shap(best_model, X_train, output_path, top_n=10):
-    print("\n🌟 Computing SHAP values...")
-    explainer = shap.TreeExplainer(best_model)
-    shap_values = explainer.shap_values(X_train)
-
-    plt.figure(figsize=(8, 6), dpi=600)
-    shap.summary_plot(shap_values, X_train, plot_type="bar", max_display=top_n, show=False)
-    plt.tight_layout()
-    plt.savefig(output_path, bbox_inches='tight')
-    plt.close()
-    print(f"✅ SHAP summary plot saved to {output_path}")
-
-def save_model(model, scaler, prefix, model_dir):
-    joblib.dump(model, f"{model_dir}/RF_{prefix}_best_model.pkl")
+    os.makedirs(model_dir, exist_ok=True)
+    joblib.dump(best_model, f"{model_dir}/RF_{prefix}_best_model.pkl")
     joblib.dump(scaler, f"{model_dir}/{prefix}_scaler.pkl")
 
-def predict_test(best_model, scaler, kmer_normalized, test_metadata_path, test_kmers_path, target_column):
+    pd.DataFrame(grid_model.cv_results_).to_csv(f"{model_dir}/grid_search_results.csv", index=False)
+
+    with open(f"{model_dir}/model_summary.txt", 'w') as f:
+        f.write(f"Best Hyperparameters:\n{grid_model.best_params_}\n\n")
+        f.write(f"OOB Score: {getattr(best_model, 'oob_score_', 'N/A')}\n")
+
+    joblib.dump(grid_model, f"{model_dir}/full_grid_model.pkl")
+
+def predict_test(best_model, scaler, kmer_normalized, test_metadata_path, test_kmers_path, target_column, selected_features):
     metadata = pd.read_csv(test_metadata_path, sep=",", index_col=0)
     kmer = pd.read_csv(test_kmers_path, sep="\t", index_col=0)
 
@@ -249,7 +236,9 @@ def predict_test(best_model, scaler, kmer_normalized, test_metadata_path, test_k
     kmer = kmer.loc[shared_kmers]
     kmer_norm = kmer.div(kmer.sum(axis=0), axis=1) * 100
     kmer_norm = kmer_norm.astype(float).dropna()
+
     X_test = pd.DataFrame(scaler.transform(kmer_norm.T), index=kmer.columns)
+    X_test = X_test[selected_features]
 
     shared_samples = metadata.index.intersection(X_test.index)
     metadata = metadata.loc[shared_samples]
@@ -258,8 +247,37 @@ def predict_test(best_model, scaler, kmer_normalized, test_metadata_path, test_k
     y_pred = best_model.predict(X_test)
     return y_true, y_pred
 
-# === MAIN ===
+def plot_top_features(model, feature_names, path_csv, path_png, top_n=10):
+    importances = model.feature_importances_
+    importance_df = pd.DataFrame({"Feature": feature_names, "Importance": importances})
+    top_df = importance_df.sort_values(by="Importance", ascending=False).head(top_n)
+    top_df.to_csv(path_csv, index=False)
 
+    plt.figure(figsize=(8, 5), dpi=300)
+    sns.set_theme(style="whitegrid")
+    ax = sns.barplot(x="Importance", y="Feature", data=top_df, edgecolor='black')
+    ax.set_title("Top 10 Most Informative Features", fontsize=14, weight='bold')
+    ax.set_xlabel("Feature Importance")
+    ax.set_ylabel("Feature")
+    plt.tight_layout()
+    plt.savefig(path_png, dpi=600, bbox_inches='tight')
+    plt.close()
+
+def compute_and_plot_rf_importance(best_model, X_train, output_path, top_n=10):
+    print("\n🌟 Plotting RF feature importances...")
+    importances = best_model.feature_importances_
+    plt.figure(figsize=(8, 6), dpi=600)
+    indices = np.argsort(importances)[-top_n:]
+    plt.barh(range(top_n), importances[indices], align='center')
+    plt.yticks(np.arange(top_n), np.array(X_train.columns)[indices])
+    plt.xlabel('Relative Importance')
+    plt.title('Top RF Feature Importances')
+    plt.tight_layout()
+    plt.savefig(output_path, bbox_inches='tight')
+    plt.close()
+    print(f"✅ RF feature importance plot saved to {output_path}")
+
+# === MAIN ===
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_metadata", required=True)
@@ -277,29 +295,56 @@ def main():
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(model_dir, exist_ok=True)
 
+        # === Load and preprocess data ===
         X, y, kmer_normalized, scaler = load_and_preprocess_data(args.train_metadata, args.train_kmers, target_column)
-        X = apply_feature_selection(X, y, top_k=TOP_K_FEATURES)
         compute_balance_metrics(y, title=f"{target_column} Before Balancing")
-        X_balanced, y_balanced = choose_best_balancing_method(X, y)
 
-        X_train, X_valid, y_train, y_valid = select_best_train_test_split(X_balanced, y_balanced, n_trials=10)
+        # === Feature selection ===
+        X_selected = feature_selection_rf(X, y, top_k=TOP_K_FEATURES)
 
+        # === Class balancing ===
+        X_balanced, y_balanced = choose_best_balancing_method(X_selected, y)
+
+        # === Train/validation split ===
+        X_train, X_valid, y_train, y_valid = train_test_split(
+            X_balanced, y_balanced,
+            stratify=y_balanced,
+            test_size=0.2,
+            random_state=SEED
+        )
+
+        # === Hyperparameter tuning ===
         grid_model = run_grid_search(X_train, y_train)
         best_model = grid_model.best_estimator_
 
-        save_model(best_model, scaler, target_column.lower(), model_dir)
+        # === Save model, scaler, and grid search results ===
+        save_model(grid_model, scaler, target_column.lower(), model_dir)
 
+        # (❌ REMOVED hyperparameter performance plot)
+
+        # === Validation prediction and evaluation ===
         y_pred_val = best_model.predict(X_valid)
-        labels = sorted(set(y_valid) | set(y_pred_val))
-        evaluate_model(y_valid, y_pred_val, labels, "Validation", os.path.join(output_dir, "validation"))
+        labels_val = sorted(set(y_valid) | set(y_pred_val))
+        evaluate_model(y_valid, y_pred_val, labels_val, "Validation", os.path.join(output_dir, "validation"))
 
-        plot_top_features(best_model, kmer_normalized, os.path.join(output_dir, "top10_kmers.csv"), os.path.join(output_dir, "top10_features.png"))
-        compute_and_plot_shap(best_model, X_train, os.path.join(output_dir, "shap_summary.png"))
+        # === Feature importance plots ===
+        plot_top_features(best_model, X_selected.columns, os.path.join(output_dir, "top10_kmers.csv"), os.path.join(output_dir, "top10_features.png"))
+        compute_and_plot_rf_importance(best_model, X_train, os.path.join(output_dir, "rf_summary.png"))
 
-        y_test_true, y_test_pred = predict_test(best_model, scaler, kmer_normalized, args.test_metadata, args.test_kmers, target_column)
+        # === Test set prediction and evaluation ===
+        y_test_true, y_test_pred = predict_test(
+            best_model,
+            scaler,
+            kmer_normalized,
+            args.test_metadata,
+            args.test_kmers,
+            target_column,
+            selected_features=X_selected.columns
+        )
         labels_test = sorted(set(y_test_true) | set(y_test_pred))
         evaluate_model(y_test_true, y_test_pred, labels_test, "Test", os.path.join(output_dir, "test"))
 
+        # === Save predictions on test set ===
         pd.DataFrame({
             f"True_{target_column}": y_test_true,
             f"Predicted_{target_column}": y_test_pred

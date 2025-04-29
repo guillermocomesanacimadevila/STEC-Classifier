@@ -13,8 +13,8 @@ Random Forest Classification pipeline -> Classify Shigatoxigenic E.coli samples 
   <img src="https://github.com/user-attachments/assets/4bbcf45e-d572-45e9-a16c-3ff379e72390" alt="Bash" width="65" style="margin: 0 10px;"/>
   <img src="https://github.com/user-attachments/assets/805532d9-fc8b-446f-aac6-933cc4aa6185" alt="Git" width="65" style="margin: 0 10px;"/>
   <img src="https://github.com/user-attachments/assets/0427f54d-9e05-4969-91d1-13af16c3fb42" alt="SQL" width="110" style="margin: 0 10px;"/>
-  <img src="https://github.com/user-attachments/assets/bfc30e37-cb64-4d59-8cec-52ab5c12fab7" alt="Docker" width="65" style="margin: 0 10px;"/>
-  <img src="https://github.com/user-attachments/assets/910424f1-59e7-40cf-bc40-2b55d0ccb7d5" alt="AWS" width="65" style="margin: 0 10px;"/>
+  <img src="https://github.com/user-attachments/assets/bfc30e37-cb64-4d59-8cec-52ab5c12fab7" alt="Docker" width="75" style="margin: 0 10px;"/>
+  <img src="https://github.com/user-attachments/assets/910424f1-59e7-40cf-bc40-2b55d0ccb7d5" alt="AWS" width="80" style="margin: 0 10px;"/>
 </p>
 
 ## Execute Pipeline

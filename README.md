@@ -1,6 +1,8 @@
 # STEC Pipeline Description 🧬🧬
 Random Forest Classification pipeline -> Classify Shigatoxigenic E.coli samples based on Geographical Region & Country
 
+** All model training and evaluation were performed on an AWS EC2 r5.8xlarge instance (32 vCPUs, 256 GB RAM) running Ubuntu Server 24.04 LTS. ** 
+
 -> Features = kmers
 
 -> Predictor = Region / Country

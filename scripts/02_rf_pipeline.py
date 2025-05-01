@@ -341,85 +341,83 @@ def main():
     parser.add_argument("--test_metadata", required=True, help="Path to test metadata CSV")
     parser.add_argument("--train_kmers", required=True, help="Path to training kmer table")
     parser.add_argument("--test_kmers", required=True, help="Path to test kmer table")
-    parser.add_argument("--target_column", required=True, help="Target column to predict (e.g., 'Country')")
-    parser.add_argument("--output_dir", required=True, help="Directory to store output files")
-    parser.add_argument("--model_dir", required=True, help="Directory to store model files")
+    parser.add_argument("--output_dir", required=True, help="Base directory to store output files")
+    parser.add_argument("--model_dir", required=True, help="Base directory to store model files")
 
     args = parser.parse_args()
 
-    target_column = args.target_column
-    output_dir = os.path.join(args.output_dir, target_column.lower())
-    model_dir = os.path.join(args.model_dir, target_column.lower())
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(model_dir, exist_ok=True)
+    for target_column in ["Region", "Country"]:
+        print(f"\n=== 🔁 Running pipeline for: {target_column.upper()} ===")
 
-    X, y, kmer_normalized, scaler, kmer_filtered = load_and_preprocess_data(args.train_metadata, args.train_kmers, target_column)
-    compute_balance_metrics(y, title="Before Balancing", save_path=f"{output_dir}/balance_before.csv")
+        output_dir = os.path.join(args.output_dir, target_column.lower())
+        model_dir = os.path.join(args.model_dir, target_column.lower())
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(model_dir, exist_ok=True)
 
-    X_selected = feature_selection_rf(X, y, kmer_filtered, top_k=TOP_K_FEATURES)
-    selected_features_list = X_selected.columns.tolist()
+        X, y, kmer_normalized, scaler, kmer_filtered = load_and_preprocess_data(args.train_metadata, args.train_kmers, target_column)
+        compute_balance_metrics(y, title="Before Balancing", save_path=f"{output_dir}/balance_before.csv")
 
-    X_balanced, y_balanced = choose_best_balancing_method(X_selected, y)
+        X_selected = feature_selection_rf(X, y, kmer_filtered, top_k=TOP_K_FEATURES)
+        selected_features_list = X_selected.columns.tolist()
 
-    X_train, X_valid, y_train, y_valid = train_test_split(
-        X_balanced, y_balanced,
-        stratify=y_balanced,
-        test_size=0.2,
-        random_state=SEED
-    )
+        X_balanced, y_balanced = choose_best_balancing_method(X_selected, y)
 
-    grid_model = run_grid_search(X_train, y_train)
-    best_model = grid_model.best_estimator_
+        X_train, X_valid, y_train, y_valid = train_test_split(
+            X_balanced, y_balanced,
+            stratify=y_balanced,
+            test_size=0.2,
+            random_state=SEED
+        )
 
-    save_model(grid_model, scaler, target_column.lower(), model_dir, selected_features_list)
+        grid_model = run_grid_search(X_train, y_train)
+        best_model = grid_model.best_estimator_
 
-    plot_hyperparam_performance(grid_model, f"{output_dir}/hyperparam_performance.png")
+        save_model(grid_model, scaler, target_column.lower(), model_dir, selected_features_list)
 
-    y_pred_val = best_model.predict(X_valid)
-    labels_val = sorted(set(y_valid) | set(y_pred_val))
-    evaluate_model(y_valid, y_pred_val, labels_val, "Validation", f"{output_dir}/validation")
+        plot_hyperparam_performance(grid_model, f"{output_dir}/hyperparam_performance.png")
 
-    # Save training/validation predictions to CSV
-    pd.DataFrame({
-        f"True_{target_column}": y_valid,
-        f"Predicted_{target_column}": y_pred_val
-    }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_validation.csv", index=False)
-    print(f"✅ Training/validation predictions saved to {output_dir}/{target_column.lower()}_predictions_validation.csv")
+        y_pred_val = best_model.predict(X_valid)
+        labels_val = sorted(set(y_valid) | set(y_pred_val))
+        evaluate_model(y_valid, y_pred_val, labels_val, "Validation", f"{output_dir}/validation")
 
-    plot_top_features(best_model, X_selected.columns, f"{output_dir}/top10_kmers.csv", f"{output_dir}/top10_features.png")
-    compute_and_plot_rf_importance(best_model, X_train, f"{output_dir}/rf_summary.png")
+        pd.DataFrame({
+            f"True_{target_column}": y_valid,
+            f"Predicted_{target_column}": y_pred_val
+        }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_validation.csv", index=False)
+        print(f"✅ Training/validation predictions saved to {output_dir}/{target_column.lower()}_predictions_validation.csv")
 
-    y_test_true, y_test_pred = predict_test(
-        best_model,
-        scaler,
-        kmer_normalized,
-        args.test_metadata,
-        args.test_kmers,
-        target_column,
-        selected_features=X_selected.columns
-    )
-    labels_test = sorted(set(y_test_true) | set(y_test_pred))
-    evaluate_model(y_test_true, y_test_pred, labels_test, "Test", f"{output_dir}/test")
+        plot_top_features(best_model, X_selected.columns, f"{output_dir}/top10_kmers.csv", f"{output_dir}/top10_features.png")
+        compute_and_plot_rf_importance(best_model, X_train, f"{output_dir}/rf_summary.png")
 
-    pd.DataFrame({
-        f"True_{target_column}": y_test_true,
-        f"Predicted_{target_column}": y_test_pred
-    }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_test.csv")
+        y_test_true, y_test_pred = predict_test(
+            best_model,
+            scaler,
+            kmer_normalized,
+            args.test_metadata,
+            args.test_kmers,
+            target_column,
+            selected_features=X_selected.columns
+        )
+        labels_test = sorted(set(y_test_true) | set(y_test_pred))
+        evaluate_model(y_test_true, y_test_pred, labels_test, "Test", f"{output_dir}/test")
 
-    compute_balance_metrics(y_balanced, title="After Balancing", save_path=f"{output_dir}/balance_after.csv")
+        pd.DataFrame({
+            f"True_{target_column}": y_test_true,
+            f"Predicted_{target_column}": y_test_pred
+        }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_test.csv")
 
-    # Final Cross-Validation Evaluation
-    final_cv_scores = cross_val_score(
-        best_model,
-        X_balanced,
-        y_balanced,
-        cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED),
-        scoring='f1_macro',
-        n_jobs=-1
-    )
-    print(f"\n✅ Final 5-Fold Cross-Validated F1_macro: {final_cv_scores.mean():.3f} ± {final_cv_scores.std():.3f}")
+        compute_balance_metrics(y_balanced, title="After Balancing", save_path=f"{output_dir}/balance_after.csv")
 
-    print(f"\n✅ {target_column} pipeline complete. Outputs saved to: {output_dir}")
+        final_cv_scores = cross_val_score(
+            best_model,
+            X_balanced,
+            y_balanced,
+            cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED),
+            scoring='f1_macro',
+            n_jobs=-1
+        )
+        print(f"\n✅ Final 5-Fold Cross-Validated F1_macro ({target_column}): {final_cv_scores.mean():.3f} ± {final_cv_scores.std():.3f}")
+        print(f"✅ {target_column} pipeline complete. Outputs saved to: {output_dir}\n")
 
 if __name__ == "__main__":
     main()

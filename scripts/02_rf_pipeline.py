@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 # === IMPORTS ===
-import argparse
 import os
+import argparse
 import warnings
 import joblib
 import numpy as np
@@ -71,11 +71,21 @@ def feature_selection_rf(X, y, kmer_filtered, top_k=TOP_K_FEATURES, cumulative_t
     X_reduced = pd.DataFrame(X_reduced, columns=kept_features, index=X.index)
     print(f"✅ Features after VarianceThreshold: {X_reduced.shape[1]}")
 
-    print("\n⚡ Step 2: Removing highly correlated features...")
-    corr_matrix = X_reduced.corr().abs()
-    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-    to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+    print("\n⚡ Step 2: Removing highly correlated features... (FAST OPTIMIZED)")
+
+    X_np = X_reduced.to_numpy()
+    X_np -= np.mean(X_np, axis=0)
+    X_np /= np.std(X_np, axis=0)
+
+    cor_matrix = np.dot(X_np.T, X_np) / (X_np.shape[0] - 1)
+    cor_matrix = np.abs(cor_matrix)
+
+    upper_tri = np.triu(cor_matrix, k=1)
+    to_drop = [X_reduced.columns[j] for i in range(upper_tri.shape[0]) for j in range(i + 1, upper_tri.shape[1]) if
+               upper_tri[i, j] > 0.95]
+
     X_filtered = X_reduced.drop(columns=to_drop)
+
     print(f"✅ Features after correlation filtering: {X_filtered.shape[1]}")
 
     print("\n🌟 Step 3: Training quick RF model for feature importance ranking...")
@@ -176,7 +186,7 @@ def build_rf():
 
 def run_grid_search(X_train, y_train):
     param_grid = {
-        'n_estimators': [100, 200, 300, 400],
+        'n_estimators': [100, 200],
         'max_depth': [10, 20, None],
         'max_features': ['sqrt', 'log2', 0.3, 0.5],
         'min_samples_split': [2, 5, 10],
@@ -326,82 +336,90 @@ def plot_hyperparam_performance(grid_model, output_path):
 
 # === MAIN ===
 def main():
-    parser = argparse.ArgumentParser(description="Random Forest pipeline with feature selection for Region/Country prediction.")
-
-    parser.add_argument("--train_metadata", required=True, help="Path to the training metadata CSV file")
-    parser.add_argument("--test_metadata", required=True, help="Path to the test metadata CSV file")
-    parser.add_argument("--train_kmers", required=True, help="Path to the training kmer table file")
-    parser.add_argument("--test_kmers", required=True, help="Path to the test kmer table file")
-    parser.add_argument("--output_dir", required=True, help="Directory to save all outputs")
-    parser.add_argument("--model_dir", required=True, help="Directory to save all models")
+    parser = argparse.ArgumentParser(description="Random Forest pipeline for classification using kmers and metadata.")
+    parser.add_argument("--train_metadata", required=True, help="Path to training metadata CSV")
+    parser.add_argument("--test_metadata", required=True, help="Path to test metadata CSV")
+    parser.add_argument("--train_kmers", required=True, help="Path to training kmer table")
+    parser.add_argument("--test_kmers", required=True, help="Path to test kmer table")
+    parser.add_argument("--target_column", required=True, help="Target column to predict (e.g., 'Country')")
+    parser.add_argument("--output_dir", required=True, help="Directory to store output files")
+    parser.add_argument("--model_dir", required=True, help="Directory to store model files")
 
     args = parser.parse_args()
 
-    for target_column in ["Region", "Country"]:
-        output_dir = os.path.join(args.output_dir, target_column.lower())
-        model_dir = os.path.join(args.model_dir, target_column.lower())
-        os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(model_dir, exist_ok=True)
+    target_column = args.target_column
+    output_dir = os.path.join(args.output_dir, target_column.lower())
+    model_dir = os.path.join(args.model_dir, target_column.lower())
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
 
-        X, y, kmer_normalized, scaler, kmer_filtered = load_and_preprocess_data(args.train_metadata, args.train_kmers, target_column)
-        compute_balance_metrics(y, title="Before Balancing", save_path=f"{output_dir}/balance_before.csv")
+    X, y, kmer_normalized, scaler, kmer_filtered = load_and_preprocess_data(args.train_metadata, args.train_kmers, target_column)
+    compute_balance_metrics(y, title="Before Balancing", save_path=f"{output_dir}/balance_before.csv")
 
-        X_selected = feature_selection_rf(X, y, kmer_filtered, top_k=TOP_K_FEATURES)
-        selected_features_list = X_selected.columns.tolist()
+    X_selected = feature_selection_rf(X, y, kmer_filtered, top_k=TOP_K_FEATURES)
+    selected_features_list = X_selected.columns.tolist()
 
-        X_balanced, y_balanced = choose_best_balancing_method(X_selected, y)
+    X_balanced, y_balanced = choose_best_balancing_method(X_selected, y)
 
-        X_train, X_valid, y_train, y_valid = train_test_split(
-            X_balanced, y_balanced,
-            stratify=y_balanced,
-            test_size=0.2,
-            random_state=SEED
-        )
+    X_train, X_valid, y_train, y_valid = train_test_split(
+        X_balanced, y_balanced,
+        stratify=y_balanced,
+        test_size=0.2,
+        random_state=SEED
+    )
 
-        grid_model = run_grid_search(X_train, y_train)
-        best_model = grid_model.best_estimator_
+    grid_model = run_grid_search(X_train, y_train)
+    best_model = grid_model.best_estimator_
 
-        save_model(grid_model, scaler, target_column.lower(), model_dir, selected_features_list)
+    save_model(grid_model, scaler, target_column.lower(), model_dir, selected_features_list)
 
-        plot_hyperparam_performance(grid_model, f"{output_dir}/hyperparam_performance.png")
+    plot_hyperparam_performance(grid_model, f"{output_dir}/hyperparam_performance.png")
 
-        y_pred_val = best_model.predict(X_valid)
-        labels_val = sorted(set(y_valid) | set(y_pred_val))
-        evaluate_model(y_valid, y_pred_val, labels_val, "Validation", f"{output_dir}/validation")
+    y_pred_val = best_model.predict(X_valid)
+    labels_val = sorted(set(y_valid) | set(y_pred_val))
+    evaluate_model(y_valid, y_pred_val, labels_val, "Validation", f"{output_dir}/validation")
 
-        plot_top_features(best_model, X_selected.columns, f"{output_dir}/top10_kmers.csv", f"{output_dir}/top10_features.png")
-        compute_and_plot_rf_importance(best_model, X_train, f"{output_dir}/rf_summary.png")
+    # Save training/validation predictions to CSV
+    pd.DataFrame({
+        f"True_{target_column}": y_valid,
+        f"Predicted_{target_column}": y_pred_val
+    }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_validation.csv", index=False)
+    print(f"✅ Training/validation predictions saved to {output_dir}/{target_column.lower()}_predictions_validation.csv")
 
-        y_test_true, y_test_pred = predict_test(
-            best_model,
-            scaler,
-            kmer_normalized,
-            args.test_metadata,
-            args.test_kmers,
-            target_column,
-            selected_features=X_selected.columns
-        )
-        labels_test = sorted(set(y_test_true) | set(y_test_pred))
-        evaluate_model(y_test_true, y_test_pred, labels_test, "Test", f"{output_dir}/test")
+    plot_top_features(best_model, X_selected.columns, f"{output_dir}/top10_kmers.csv", f"{output_dir}/top10_features.png")
+    compute_and_plot_rf_importance(best_model, X_train, f"{output_dir}/rf_summary.png")
 
-        pd.DataFrame({
-            f"True_{target_column}": y_test_true,
-            f"Predicted_{target_column}": y_test_pred
-        }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_test.csv")
+    y_test_true, y_test_pred = predict_test(
+        best_model,
+        scaler,
+        kmer_normalized,
+        args.test_metadata,
+        args.test_kmers,
+        target_column,
+        selected_features=X_selected.columns
+    )
+    labels_test = sorted(set(y_test_true) | set(y_test_pred))
+    evaluate_model(y_test_true, y_test_pred, labels_test, "Test", f"{output_dir}/test")
 
-        compute_balance_metrics(y_balanced, title="After Balancing", save_path=f"{output_dir}/balance_after.csv")
+    pd.DataFrame({
+        f"True_{target_column}": y_test_true,
+        f"Predicted_{target_column}": y_test_pred
+    }).to_csv(f"{output_dir}/{target_column.lower()}_predictions_test.csv")
 
-        final_cv_scores = cross_val_score(
-            best_model,
-            X_balanced,
-            y_balanced,
-            cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED),
-            scoring='f1_macro',
-            n_jobs=-1
-        )
-        print(f"\n✅ Final 5-Fold Cross-Validated F1_macro: {final_cv_scores.mean():.3f} ± {final_cv_scores.std():.3f}")
+    compute_balance_metrics(y_balanced, title="After Balancing", save_path=f"{output_dir}/balance_after.csv")
 
-        print(f"\n✅ {target_column} pipeline complete. Outputs saved to: {output_dir}")
+    # Final Cross-Validation Evaluation
+    final_cv_scores = cross_val_score(
+        best_model,
+        X_balanced,
+        y_balanced,
+        cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED),
+        scoring='f1_macro',
+        n_jobs=-1
+    )
+    print(f"\n✅ Final 5-Fold Cross-Validated F1_macro: {final_cv_scores.mean():.3f} ± {final_cv_scores.std():.3f}")
+
+    print(f"\n✅ {target_column} pipeline complete. Outputs saved to: {output_dir}")
 
 if __name__ == "__main__":
     main()

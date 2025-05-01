@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# data_cleaning_upgraded_v2.py
 
 import os
 import argparse
@@ -25,6 +26,7 @@ def normalize_text_fields(df):
         df[col] = df[col].fillna("").astype(str)
         df[col] = df[col].str.strip()
         df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+        df[col] = df[col].str.replace(r'\.$', '', regex=True)
         df[col] = df[col].str.title()
     return df
 
@@ -51,12 +53,12 @@ def clean_region_column(df):
 
 def clean_stx_column(df):
     df['Stx'] = df['Stx'].str.strip()
-    df = df[df['Stx'].notna() & ~df['Stx'].str.lower().eq('none')]
+    df = df[df['Stx'].notna() & ~df['Stx'].str.lower().isin(['none', 'unknown', 'nan'])]
     return df
 
 def clean_pt_column(df):
     df['PT'] = df['PT'].str.strip()
-    df = df[df['PT'].notna() & ~df['PT'].str.lower().eq('nan')]
+    df = df[df['PT'].notna() & ~df['PT'].str.lower().isin(['none', 'unknown', 'nan'])]
     return df
 
 def remove_duplicates(df):
@@ -79,6 +81,16 @@ def report_unseen_classes(train_df, test_df, field="Country"):
     unseen = test_classes - train_classes
     if unseen:
         print(f"\n⚠️ {field} classes only in test set ({len(unseen)}): {sorted(unseen)}")
+
+def remove_unseen_test_classes(train_df, test_df, fields=["Country", "Region"]):
+    for field in fields:
+        seen_labels = set(train_df[field].unique())
+        original_count = len(test_df)
+        test_df = test_df[test_df[field].isin(seen_labels)]
+        removed = original_count - len(test_df)
+        if removed > 0:
+            print(f"⚠️ Removed {removed} test samples with unseen {field} labels.")
+    return test_df
 
 def clean_metadata(metadata_tr, metadata_te):
     metadata_tr = normalize_text_fields(metadata_tr)
@@ -171,6 +183,7 @@ def main():
 
     metadata_tr, metadata_te = load_metadata(args.train_metadata, args.test_metadata)
     cleaned_tr, cleaned_te = clean_metadata(metadata_tr, metadata_te)
+    cleaned_te = remove_unseen_test_classes(cleaned_tr, cleaned_te)
     filtered_tr, filtered_te = filter_by_kmers(cleaned_tr, cleaned_te, args.train_kmers, args.test_kmers)
     print_summary(filtered_tr, filtered_te, metadata_tr, metadata_te)
     save_cleaned_metadata(filtered_tr, filtered_te, args.output_dir)

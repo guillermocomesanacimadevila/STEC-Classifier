@@ -34,3 +34,6 @@ bash ~/tools/nextflow run /full/path/to/main.nf
 ```bash
 chmod +x run_pipeline.sh && ./run_pipeline.sh
 ```
+
+## Pipeline Workflow
+![image](https://github.com/user-attachments/assets/47276e78-0b3b-46f2-a3fa-bd62c0d03164)

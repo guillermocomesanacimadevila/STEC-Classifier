@@ -36,4 +36,5 @@ chmod +x run_pipeline.sh && ./run_pipeline.sh
 ```
 
 ## Pipeline Workflow
-<img src="https://github.com/user-attachments/assets/47276e78-0b3b-46f2-a3fa-bd62c0d03164" width="800"/>
+<img src="![Blue Illustration Process of Hospital Patient Admission Flowchart Poster-17](https://github.com/user-attachments/assets/50b82c27-34a7-4e31-a0c5-e0814a57be05)
+" width="800"/>

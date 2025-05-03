@@ -36,4 +36,4 @@ chmod +x run_pipeline.sh && ./run_pipeline.sh
 ```
 
 ## Pipeline Workflow
-![image](https://github.com/user-attachments/assets/47276e78-0b3b-46f2-a3fa-bd62c0d03164)
+<img src="https://github.com/user-attachments/assets/47276e78-0b3b-46f2-a3fa-bd62c0d03164" width="800"/>

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # === IMPORTS ===
 import os
 import warnings

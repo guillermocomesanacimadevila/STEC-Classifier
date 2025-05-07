@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 SEED = 42
 np.random.seed(SEED)
 random.seed(SEED)
-MAX_FEATURES = 1000
+MAX_FEATURES = 2000
 CUMULATIVE_THRESHOLD = 0.98
 
 def load_and_preprocess_data(metadata_path, kmer_path, target_column):
@@ -101,7 +101,7 @@ def feature_selection_rf(X, y, kmer_filtered):
     to_drop = [X_reduced.columns[j]
                for i in range(upper_tri.shape[0])
                for j in range(i + 1, upper_tri.shape[1])
-               if upper_tri[i, j] > 0.90]
+               if upper_tri[i, j] > 0.95]
     X_filtered = X_reduced.drop(columns=to_drop)
     print(f"✅ Features after correlation filtering: {X_filtered.shape[1]}")
 

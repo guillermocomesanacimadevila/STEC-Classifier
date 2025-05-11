@@ -28,7 +28,11 @@ cd STEC-Classifier
 ```
 
 ```bash
-bash ~/tools/nextflow run /full/path/to/main.nf
+$($(find / -name nextflow -type f 2>/dev/null | head -n 1))
+```
+
+```bash
+cd ~/STEC-Classifier
 ```
 
 ```bash
